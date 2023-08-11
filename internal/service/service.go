@@ -2,10 +2,14 @@ package service
 
 import (
 	"fmt"
+	"os"
 	"regexp"
+	"strconv"
 	"time"
 
+	"github.com/ByteNinja42/ExpensesTool/internal/config"
 	"github.com/ByteNinja42/ExpensesTool/internal/entities"
+	"github.com/dgrijalva/jwt-go"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -23,8 +27,10 @@ type ExpensesRepo interface {
 }
 
 type UserRepo interface {
-	CreateUser(entities.UserSignUp) error
+	CreateUser(signUp entities.UserSignUp) error
 	IsUserExists(email string, passwordHash string) (bool, error)
+	GetCredentialsByEmail(email string) (string, string, error)
+	GetUserIDByEmail(email string) (string, error)
 }
 
 func (ex ExpensesService) UserSignUp(signUp entities.UserSignUp) error {
@@ -41,11 +47,33 @@ func (ex ExpensesService) UserSignUp(signUp entities.UserSignUp) error {
 	if isExist {
 		return fmt.Errorf("err in service : %w", err)
 	}
+	fmt.Println(signUp)
 	err = ex.User.CreateUser(signUp)
 	if err != nil {
 		return fmt.Errorf("err in service : %w", err)
 	}
 	return nil
+}
+
+func (ex ExpensesService) UserSignIn(signIn entities.UserSignIn) (string, error) {
+	isValid, err := isSignInvalid(signIn)
+	if !isValid || err != nil {
+		return "", fmt.Errorf("err in service : %w", err)
+	}
+	passwordHash, userID, err := ex.User.GetCredentialsByEmail(signIn.Email)
+	if err != nil {
+		return "", fmt.Errorf("err in database : %w", err)
+	}
+	err = isPasswordCorrect(signIn.Password, passwordHash)
+	if err != nil {
+		return "", fmt.Errorf("err in service : password isn't correct")
+	}
+
+	token, err := CreateToken(userID)
+	if err != nil {
+		return "", err
+	}
+	return token, nil
 }
 
 func (ex ExpensesService) CreateExpense(expense entities.ExpenseRequest, userID string) error {
@@ -75,6 +103,21 @@ func (ex ExpensesService) CreateExpense(expense entities.ExpenseRequest, userID 
 	return nil
 }
 
+func isSignInvalid(signIn entities.UserSignIn) (bool, error) {
+	emailRegex := `^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`
+	if isEmailValid := regexp.MustCompile(emailRegex).MatchString(signIn.Email); !isEmailValid {
+		return false, entities.ErrEmailInvalid
+	}
+	if signIn.Password == "" {
+		return false, entities.ErrPasswordEmpty
+	}
+	return true, nil
+}
+
+func isPasswordCorrect(password, hashPassword string) error {
+	err := bcrypt.CompareHashAndPassword([]byte(hashPassword), []byte(password))
+	return err
+}
 func isSignUpValid(signUp entities.UserSignUp) (bool, error) {
 	if signUp.FirstName == "" {
 		return false, entities.ErrFirstNameEmpty
@@ -117,7 +160,28 @@ func GenerateHash(password string) (string, error) {
 	hashPassword := string(hashedBytes)
 	return hashPassword, nil
 }
-func CheckPassword(password, passwordHash string) error {
-	err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password))
-	return err
+
+type JWTClaim struct {
+	UserID string `json:"userID"`
+	jwt.StandardClaims
+}
+
+func CreateToken(userID string) (string, error) {
+	timeExp, err := strconv.Atoi(config.GetEnv("TOKEN_EXPIRES", "15"))
+	if err != nil {
+		return "", err
+	}
+	claims := &JWTClaim{
+		UserID: userID,
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: time.Now().Add(time.Duration(timeExp) * time.Minute).Unix(),
+		},
+	}
+	fmt.Println(claims.ExpiresAt)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(os.Getenv("ACCESS_KEY")))
+	if err != nil {
+		return "", err
+	}
+	return tokenString, nil
 }
