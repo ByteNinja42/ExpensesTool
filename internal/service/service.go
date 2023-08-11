@@ -29,7 +29,7 @@ type ExpensesRepo interface {
 type UserRepo interface {
 	CreateUser(signUp entities.UserSignUp) error
 	IsUserExists(email string, passwordHash string) (bool, error)
-	GetHashPasswordByEmail(email string) (string, error)
+	GetCredentialsByEmail(email string) (string, string, error)
 	GetUserIDByEmail(email string) (string, error)
 }
 
@@ -43,15 +43,15 @@ func (ex ExpensesService) UserSignUp(signUp entities.UserSignUp) error {
 		return fmt.Errorf("err in service : %w", err)
 	}
 	signUp.Password = passwordHash
-	//isExist, err := ex.User.IsUserExists(signUp.Email, signUp.Password)
-	//if isExist {
-	//	return fmt.Errorf("err in service : %w", err)
-	//}
+	isExist, err := ex.User.IsUserExists(signUp.Email, signUp.Password)
+	if isExist {
+		return fmt.Errorf("err in service : %w", err)
+	}
 	fmt.Println(signUp)
-	//err = ex.User.CreateUser(signUp)
-	//if err != nil {
-	//	return fmt.Errorf("err in service : %w", err)
-	//}
+	err = ex.User.CreateUser(signUp)
+	if err != nil {
+		return fmt.Errorf("err in service : %w", err)
+	}
 	return nil
 }
 
@@ -60,7 +60,7 @@ func (ex ExpensesService) UserSignIn(signIn entities.UserSignIn) (string, error)
 	if !isValid || err != nil {
 		return "", fmt.Errorf("err in service : %w", err)
 	}
-	passwordHash, err := ex.User.GetHashPasswordByEmail(signIn.Email)
+	passwordHash, userID, err := ex.User.GetCredentialsByEmail(signIn.Email)
 	if err != nil {
 		return "", fmt.Errorf("err in database : %w", err)
 	}
@@ -69,11 +69,7 @@ func (ex ExpensesService) UserSignIn(signIn entities.UserSignIn) (string, error)
 		return "", fmt.Errorf("err in service : password isn't correct")
 	}
 
-	uid, err := ex.User.GetUserIDByEmail(signIn.Email)
-	if err != nil {
-		return "", err
-	}
-	token, err := CreateToken(uid)
+	token, err := CreateToken(userID)
 	if err != nil {
 		return "", err
 	}
